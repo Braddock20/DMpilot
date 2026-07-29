@@ -69,6 +69,35 @@ const config = {
   contextWindow: Math.max(0, Number(process.env.CONTEXT_WINDOW || 6)),
   ownerJids: list(process.env.OWNER_JIDS),
   allowedJids: list(process.env.ALLOWED_JIDS),
+
+  // ---- Presence (autotyping, autorecording) ----
+  autoTyping: bool(process.env.AUTO_TYPING, true),
+  autoRecording: bool(process.env.AUTO_RECORDING, false), // off by default
+  // When both are enabled, pick ONE per chat so we don't look spammy.
+  // 'typing' | 'recording' | 'both' (50/50 random per chat)
+  presenceMode: (process.env.PRESENCE_MODE || 'typing').toLowerCase(),
+
+  // ---- Autoreact ----
+  autoReact: bool(process.env.AUTO_REACT, false),
+  // Comma-separated emoji to randomly pick from
+  autoReactEmojis:
+    process.env.AUTO_REACT_EMOJIS ||
+    '👍,❤️,🔥,😂,😮,😢,🙏,✨,🎉,💯,🤔,😅,🤝,🚀,💪',
+  // Only react to these message kinds. Anything not in this list is ignored.
+  autoReactOnText: bool(process.env.AUTO_REACT_ON_TEXT, true),
+  autoReactOnMedia: bool(process.env.AUTO_REACT_ON_MEDIA, true),
+
+  // ---- !grab / !grabviewonce ----
+  grabEnabled: bool(process.env.GRAB_ENABLED, true),
+  // Hard cap on how many messages a single !grab can pull
+  grabMaxMessages: Math.max(1, Math.min(500, Number(process.env.GRAB_MAX_MESSAGES || 100))),
+  // Where to put temp files (Render's /tmp is fine; ephemeral is OK for grabs)
+  grabTempDir: process.env.GRAB_TEMP_DIR || '/tmp/wa-grabs',
+
+  // ---- Reconnect behavior (free-tier resilience) ----
+  // Aggressive reconnect so the bot bounces back fast when Render spins it down.
+  reconnectMinMs: Number(process.env.RECONNECT_MIN_MS || 1000),
+  reconnectMaxMs: Number(process.env.RECONNECT_MAX_MS || 10000),
 };
 
 module.exports = config;
