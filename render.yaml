@@ -1,19 +1,40 @@
+# ============================================================
+# Render Blueprint for WhatsApp AI Replier
+# ------------------------------------------------------------
+# IMPORTANT: use this as a "Web Service" (NOT background worker)
+# so Render sees an open HTTP port and considers the deploy
+# healthy. We expose a tiny /health endpoint that responds 200
+# as long as the bot is connected to WhatsApp.
+#
+# After Render creates the service from this blueprint:
+#   1. Open the service -> Environment
+#   2. Set GEMINI_API_KEY (from aistudio.google.com/app/apikey)
+#   3. Set PHONE_NUMBER (digits only, e.g. 15551234567)
+#   4. Manual Deploy -> Deploy latest commit
+#   5. Open Logs -> grab the pairing code
+#   6. On your phone: WhatsApp -> Linked Devices ->
+#      "Link a Device" -> "Link with phone number instead"
+# ============================================================
 services:
-  - type: worker
+  - type: web               # web service (not worker) so Render sees a port
     name: whatsapp-ai-replier
     runtime: node
-    plan: free
+    plan: starter           # free plan spins down after 15 min; for 24/7 use starter
     region: oregon
     branch: main
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
     envVars:
       - key: NODE_VERSION
         value: 20.11.0
       - key: GEMINI_API_KEY
-        sync: false   # you set this in the Render dashboard
+        sync: false        # set this in the Render dashboard
       - key: PHONE_NUMBER
         sync: false
+      - key: HEALTH_PORT
+        value: "10000"
       - key: GEMINI_MODEL
         value: gemini-1.5-flash
       - key: SYSTEM_PROMPT
