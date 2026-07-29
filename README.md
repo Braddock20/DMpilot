@@ -1,6 +1,6 @@
 # WhatsApp AI Replier
 
-Personal WhatsApp auto-replier powered by **Baileys** (most powerful unofficial WhatsApp Web library) and **Google Gemini**. Pairs with your phone number via a one-time code — no QR scan. Designed to run 24/7 on **Render** as a background worker.
+Personal WhatsApp auto-replier powered by **Baileys** (most powerful unofficial WhatsApp Web library) and **Google Gemini**. Pairs with your phone number via a one-time code — no QR scan. Designed to run 24/7 on **Render**.
 
 ## Features
 
@@ -12,17 +12,18 @@ Personal WhatsApp auto-replier powered by **Baileys** (most powerful unofficial 
 - 📝 **Typing indicator** + human-like delay before replying
 - 🧱 **Long-message chunking** — splits replies over 4000 chars automatically
 - 🪪 **Allowlist + owner pinning** — test safely before opening it up
+- 💓 **HTTP /health endpoint** — Render-friendly so the deploy stays "healthy"
 
 ## Repo layout
 
 ```
 whatsapp-ai-replier/
 ├── src/
-│   ├── index.js      # bot entry point: pairing, socket, message handling
+│   ├── index.js      # bot entry: pairing, socket, message loop, /health server
 │   ├── config.js     # env loading + defaults
 │   └── gemini.js     # Gemini client + prompt builder
 ├── package.json
-├── render.yaml       # one-click Render Blueprint
+├── render.yaml       # one-click Render Blueprint (creates a Web Service)
 ├── .env.example      # copy to .env for local dev
 └── README.md
 ```
@@ -44,28 +45,51 @@ Once paired, the `auth_info_baileys/` folder holds your session. Re-running the 
 
 ## 2. Deploy to Render (24/7 hosting)
 
-### Option A — Blueprint (recommended)
+### ⚠️ Use the Blueprint — DON'T click "New Web Service" manually
 
-1. Push this folder to a **GitHub repo**.
+This is the most common reason "no open ports detected" shows up: if you create the service manually and pick the wrong options, Render doesn't know to expect a WebSocket connection. The Blueprint (`render.yaml`) is wired to do the right thing automatically.
+
+**Steps:**
+
+1. **Push this folder to a GitHub repo** (private is fine).
 2. In Render → **New → Blueprint** → point it at the repo.
-3. Render reads `render.yaml` and creates the worker.
-4. After it deploys, open the service → **Environment** and set:
+3. Render reads `render.yaml` and creates a **Web Service** with:
+   - `healthCheckPath: /health` (so it monitors the bot)
+   - `HEALTH_PORT=10000` (the port the bot listens on)
+4. **Set the secrets** in the service → **Environment**:
    - `GEMINI_API_KEY` — from [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
    - `PHONE_NUMBER` — your number, digits only, e.g. `15551234567`
-5. **Manual Deploy → Deploy latest commit** to restart.
-6. Open **Logs** — you'll see the pairing code. Use it in WhatsApp (Linked Devices → Link with phone number).
-7. Done — the worker stays up 24/7.
+5. **Manual Deploy → Deploy latest commit** to restart with the env vars.
+6. Open **Logs** — you'll see something like:
+   ```
+   [http] health server listening on 0.0.0.0:10000
+   [wa] using Baileys v2.3000.xxxxx (latest=true)
+   [wa] connecting...
+   ========================================
+     WHATSAPP PAIRING CODE
+     XXXX-XXXX
+     Open WhatsApp > Linked Devices > Link with phone number
+   ========================================
+   ```
+7. On your phone: **WhatsApp → Linked Devices → Link a Device → "Link with phone number instead"** → enter the code.
+8. Wait ~5 seconds. Logs will show `[wa] ✅ connected — bot is live.` and the service goes green.
 
-### Option B — Manual setup
+> **Plan choice:** The Blueprint defaults to `starter` ($7/mo) because the free plan spins down after 15 min and the bot will disconnect. If you want to test on the free plan first, change `plan: starter` → `plan: free` in `render.yaml`, but expect disconnects every 15 min.
 
-1. Render → **New → Background Worker**.
+### Manual setup (only if Blueprint isn't an option)
+
+If you must create the service by hand:
+
+1. Render → **New → Web Service** (NOT background worker — this bot uses a Web Service + a health port so Render considers it alive).
 2. Connect your GitHub repo.
-3. Build command: `npm install`
-4. Start command: `npm start`
-5. Add the env vars from `render.yaml` + your `GEMINI_API_KEY` and `PHONE_NUMBER`.
-6. Deploy, grab the pairing code from logs, link your device.
-
-> **Note:** Render's free plan spins workers down after ~15 min of no activity. For a WhatsApp bot that needs to stay connected, use the **Starter plan ($7/mo)** or any paid plan. The free plan works for testing but expect reconnects.
+3. **Environment**: `Node`
+4. **Build Command**: `npm install`
+5. **Start Command**: `npm start`
+6. **Health Check Path**: `/health`
+7. **Instance Type**: at least `Starter` for 24/7.
+8. Add the env vars from `render.yaml` + your `GEMINI_API_KEY` and `PHONE_NUMBER`.
+9. Add `HEALTH_PORT=10000`.
+10. Deploy, grab the pairing code from logs, link your device.
 
 ## Configuration reference
 
@@ -75,6 +99,7 @@ All env vars are in [`.env.example`](.env.example). The important ones:
 |---|---|---|
 | `GEMINI_API_KEY` | — | Required. Google AI Studio key. |
 | `PHONE_NUMBER` | — | Required. International format, digits only. |
+| `HEALTH_PORT` | `10000` | HTTP port for `/health` (Render expects 10000). |
 | `GEMINI_MODEL` | `gemini-1.5-flash` | Any Gemini model name. |
 | `SYSTEM_PROMPT` | friendly assistant | Personality injected into every reply. |
 | `REPLY_SCOPE` | `dm` | `dm`, `groups`, or `all`. |
@@ -96,6 +121,10 @@ This uses the **unofficial** WhatsApp Web protocol. Meta doesn't love it. Keep t
 
 ## Troubleshooting
 
+**Logs say "No open ports detected"** — You're running it as a Background Worker. Use a **Web Service** instead (this repo's `render.yaml` does that for you automatically). Render only checks for an open port on Web Services.
+
+**Pairs but bot shows "not active" / disconnected in WhatsApp** — This is the same issue: Render killed the service because no port was open, so Baileys never got a chance to keep the WebSocket alive. After deploying the fixed `render.yaml`, the bot will stay connected.
+
 **Pairing code never appears** — check `PHONE_NUMBER` is digits only with country code (no `+`).
 
 **"Conflict: device previously logged out"** — delete the `auth_info_baileys/` folder locally **and** on the Render instance (Manual Deploy → Clear cache & deploy), then re-pair.
@@ -105,6 +134,8 @@ This uses the **unofficial** WhatsApp Web protocol. Meta doesn't love it. Keep t
 **"429 Too Many Requests" from Gemini** — you've blown past the free-tier RPM. Either slow down with a longer `REPLY_COOLDOWN_SECONDS` or switch to a paid Gemini key.
 
 **Bot disconnects every ~15 min** — that's the free-plan spin-down. Upgrade to the Starter plan or a VPS.
+
+**Want to verify it's alive without WhatsApp?** — `curl https://<your-service>.onrender.com/health` returns `200 {"status":"ok",...}` when connected, `503` while connecting.
 
 ## License
 
