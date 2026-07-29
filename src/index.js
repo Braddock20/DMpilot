@@ -25,11 +25,21 @@ const {
   isJidBroadcast,
 } = require('@whiskeysockets/baileys');
 
+const http = require('http');
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
 
 const config = require('./config');
 const { generateReply } = require('./gemini');
+
+// ---- shared state used by the /health endpoint ---------------------------
+const botState = {
+  startedAt: Date.now(),
+  connected: false,
+  lastError: null,
+  lastMessageAt: null,
+  pairingCode: null,
+};
 
 // -------- sanity checks ---------------------------------------------------
 
@@ -141,7 +151,57 @@ function extractText(msg) {
 
 // -------- main ------------------------------------------------------------
 
+/**
+ * Tiny HTTP server so Render (which expects an open port for web services)
+ * considers the deploy healthy. Exposes:
+ *   GET /health   -> 200 if the bot is connected, 503 otherwise
+ *   GET /         -> short status JSON
+ *
+ * On a Background Worker this is optional but harmless. On a Web Service
+ * (which is what render.yaml now creates) it is required.
+ */
+function startHealthServer() {
+  const port = config.healthPort;
+  const server = http.createServer((req, res) => {
+    const uptime = Math.floor((Date.now() - botState.startedAt) / 1000);
+    if (req.url === '/health' || req.url === '/healthz') {
+      res.writeHead(botState.connected ? 200 : 503, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          status: botState.connected ? 'ok' : 'connecting',
+          connected: botState.connected,
+          uptimeSeconds: uptime,
+          lastMessageAt: botState.lastMessageAt,
+        }),
+      );
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        name: 'whatsapp-ai-replier',
+        status: botState.connected ? 'connected' : 'connecting',
+        uptimeSeconds: uptime,
+        lastError: botState.lastError,
+      }),
+    );
+  });
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`[http] health server listening on 0.0.0.0:${port}`);
+  });
+  // Don't let an HTTP error take the bot down
+  server.on('error', (err) => {
+    console.error('[http] server error:', err.message);
+  });
+  return server;
+}
+
 async function start() {
+  // Start the HTTP health server FIRST so Render sees an open port from the
+  // very first second. Without this, Render's health checks will fail and
+  // the service can be killed before Baileys finishes connecting.
+  startHealthServer();
+
   // auth_info_baileys holds the signed-in credentials between restarts.
   // On Render, this is ephemeral storage — Render will keep the worker
   // running so the auth stays, but the FIRST deploy still needs pairing.
@@ -171,14 +231,19 @@ async function start() {
 
     if (connection === 'connecting') {
       console.log('[wa] connecting...');
+      botState.connected = false;
     }
 
     if (connection === 'open') {
+      botState.connected = true;
+      botState.lastError = null;
       console.log('[wa] ✅ connected — bot is live.');
     }
 
     if (connection === 'close') {
+      botState.connected = false;
       const statusCode = lastDisconnect?.error?.output?.statusCode;
+      botState.lastError = `close code=${statusCode}`;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log(
         `[wa] connection closed (code=${statusCode}). ${
@@ -202,6 +267,7 @@ async function start() {
       await sleep(2500);
       const code = await sock.requestPairingCode(config.phoneNumber);
       const formatted = code?.match(/.{1,4}/g)?.join('-') || code;
+      botState.pairingCode = formatted;
       console.log('\n========================================');
       console.log('  WHATSAPP PAIRING CODE');
       console.log('  ' + formatted);
@@ -209,6 +275,7 @@ async function start() {
       console.log('========================================\n');
     } catch (err) {
       console.error('[wa] failed to request pairing code:', err);
+      botState.lastError = 'pairing-code request failed: ' + (err?.message || err);
     }
   }
 
@@ -258,6 +325,7 @@ async function handleIncoming(sock, msg) {
 
   // Remember this incoming message in the rolling history
   pushHistory(chatJid, 'user', text, decision.senderJid);
+  botState.lastMessageAt = Date.now();
 
   console.log(`[in ] ${chatName || chatJid}: ${text.slice(0, 80)}`);
 
