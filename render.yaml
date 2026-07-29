@@ -49,3 +49,19 @@ services:
         value: "800"
       - key: CONTEXT_WINDOW
         value: "6"
+      - key: AUTO_TYPING
+        value: "true"
+      - key: AUTO_RECORDING
+        value: "false"
+      - key: PRESENCE_MODE
+        value: typing
+      - key: AUTO_REACT
+        value: "false"
+      - key: GRAB_ENABLED
+        value: "true"
+      - key: GRAB_MAX_MESSAGES
+        value: "100"
+      - key: RECONNECT_MIN_MS
+        value: "1000"
+      - key: RECONNECT_MAX_MS
+        value: "10000"
