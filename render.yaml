@@ -1,0 +1,30 @@
+services:
+  - type: worker
+    name: whatsapp-ai-replier
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      - key: GEMINI_API_KEY
+        sync: false   # you set this in the Render dashboard
+      - key: PHONE_NUMBER
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-1.5-flash
+      - key: SYSTEM_PROMPT
+        value: You are a helpful, friendly WhatsApp assistant. Keep replies short, conversational, and natural. Use the same language the user writes in.
+      - key: REPLY_SCOPE
+        value: dm
+      - key: GROUP_MENTION_ONLY
+        value: "true"
+      - key: REPLY_COOLDOWN_SECONDS
+        value: "60"
+      - key: MAX_REPLY_CHARS
+        value: "800"
+      - key: CONTEXT_WINDOW
+        value: "6"
