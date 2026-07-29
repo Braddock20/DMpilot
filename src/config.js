@@ -58,6 +58,7 @@ const config = {
     model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
   },
   phoneNumber: (process.env.PHONE_NUMBER || '').replace(/\D/g, ''),
+  healthPort: Number(process.env.HEALTH_PORT || process.env.PORT || 10000),
   systemPrompt:
     process.env.SYSTEM_PROMPT ||
     'You are a helpful, friendly WhatsApp assistant. Keep replies short, conversational, and natural. Use the same language the user writes in.',
