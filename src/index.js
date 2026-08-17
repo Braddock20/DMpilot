@@ -46,10 +46,16 @@ const botState = {
   pairingCode: null,
   reconnectAttempts: 0,
   paired: false,
+  // Away-mode manual override: null = auto (based on activity), true = force
+  // "I'm away" (bot always allowed to reply), false = force "I'm present"
+  // (bot never replies, even if idle).
+  forceAway: null,
 };
 
 /** Map<jid, number(ms)> — last reply timestamp per chat (cooldowns) */
 const lastReplyAt = new Map();
+/** Map<jid, number(ms)> — last time YOU (the owner) sent a message in this chat */
+const lastOwnerActivityAt = new Map();
 /** Map<jid, Array<{role, text, sender, ts}>> — rolling per-chat history */
 const chatHistory = new Map();
 /** Map<jid, 'typing'|'recording'> — per-chat presence flavor */
@@ -99,6 +105,18 @@ function withinCooldown(jid) {
 
 function markReplied(jid) {
   lastReplyAt.set(jid, Date.now());
+}
+
+// ---- away mode -------------------------------------------------------
+// Returns true when the bot SHOULD be allowed to send an AI reply in this
+// chat, based on how long it's been since you last messaged there yourself.
+function isAwayFor(jid) {
+  if (!config.awayModeEnabled) return true; // feature disabled -> always allowed
+  if (botState.forceAway === true) return true; // manual "!away on"
+  if (botState.forceAway === false) return false; // manual "!away off"
+  const last = lastOwnerActivityAt.get(jid);
+  if (!last) return true; // never seen you active here -> treat as away
+  return Date.now() - last > config.awayThresholdMs;
 }
 
 function extractText(msg) {
@@ -250,7 +268,8 @@ const COMMANDS = {
       `last message: ${botState.lastMessageAt ? new Date(botState.lastMessageAt).toISOString() : 'never'}\n` +
       `model: ${config.gemini.model}\n` +
       `scope: ${config.replyScope}\n` +
-      `cooldown: ${config.cooldownMs / 1000}s`;
+      `cooldown: ${config.cooldownMs / 1000}s\n` +
+      `away mode: ${botState.forceAway === true ? 'ON (forced)' : botState.forceAway === false ? 'OFF (forced)' : 'AUTO'} (threshold ${config.awayThresholdMs / 60000}min)`;
     await sock.sendMessage(msg.key.remoteJid, { text }, { quoted: msg });
   },
 
@@ -330,11 +349,34 @@ const COMMANDS = {
     }
   },
 
+  '!away': async (sock, msg, args) => {
+    const arg = (args[0] || '').toLowerCase();
+    let text;
+    if (arg === 'on') {
+      botState.forceAway = true;
+      text = '🚶 away mode forced ON — bot will reply everywhere, ignoring your activity.';
+    } else if (arg === 'off') {
+      botState.forceAway = false;
+      text = '🙋 away mode forced OFF — bot will stay quiet everywhere until you turn this off.';
+    } else if (arg === 'auto') {
+      botState.forceAway = null;
+      text = `🤖 away mode set to AUTO — bot replies in a chat once you've been quiet there for ${config.awayThresholdMs / 60000}min.`;
+    } else {
+      const mode = botState.forceAway === true ? 'ON (forced)' : botState.forceAway === false ? 'OFF (forced)' : 'AUTO';
+      text =
+        `away mode: *${mode}*\n` +
+        `threshold: ${config.awayThresholdMs / 60000}min of no activity from you in a chat\n\n` +
+        `usage: !away on | !away off | !away auto`;
+    }
+    await sock.sendMessage(msg.key.remoteJid, { text }, { quoted: msg });
+  },
+
   '!help': async (sock, msg) => {
     const help =
       `🤖 *commands*\n` +
       `!ping - check the bot is alive\n` +
       `!status - show uptime + config\n` +
+      `!away [on|off|auto] - check/set away mode\n` +
       `!grab <N> - zip the last N messages (cap ${config.grabMaxMessages})\n` +
       `!grabviewonce - extract the most recent view-once media\n` +
       `!help - this message\n\n` +
@@ -506,8 +548,17 @@ async function start() {
 
 // ---- per-message processing ---------------------------------------------
 async function handleIncoming(sock, msg) {
-  if (!msg.message || msg.key.fromMe) return;
+  if (!msg.message) return;
   const chatJid = msg.key.remoteJid;
+
+  // Messages YOU send from your own phone show up here with fromMe=true.
+  // Use them purely to track that you're active in this chat, then stop —
+  // we never want the bot to "reply" to its own owner's outgoing texts.
+  if (msg.key.fromMe) {
+    lastOwnerActivityAt.set(chatJid, Date.now());
+    return;
+  }
+
   botState.lastMessageAt = Date.now();
 
   // Buffer this message in the grabber's ring so !grab has something to pull
@@ -555,6 +606,10 @@ async function handleIncoming(sock, msg) {
   }
   if (withinCooldown(chatJid)) {
     console.log(`[skip] ${chatJid} -> cooldown (${config.cooldownMs / 1000}s)`);
+    return;
+  }
+  if (!isAwayFor(chatJid)) {
+    console.log(`[skip] ${chatJid} -> you're active here, letting you reply`);
     return;
   }
 
