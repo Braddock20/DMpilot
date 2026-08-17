@@ -70,6 +70,13 @@ const config = {
   ownerJids: list(process.env.OWNER_JIDS),
   allowedJids: list(process.env.ALLOWED_JIDS),
 
+  // ---- Away mode (only AI-reply when the owner has gone quiet) ----
+  // If true (default), the bot only sends AI replies in a chat once the
+  // owner hasn't sent a message there themselves for AWAY_THRESHOLD_MINUTES.
+  // Set to false to restore the old "always reply" behavior.
+  awayModeEnabled: bool(process.env.AWAY_MODE_ENABLED, true),
+  awayThresholdMs: Math.max(0, Number(process.env.AWAY_THRESHOLD_MINUTES || 15) * 60 * 1000),
+
   // ---- Presence (autotyping, autorecording) ----
   autoTyping: bool(process.env.AUTO_TYPING, true),
   autoRecording: bool(process.env.AUTO_RECORDING, false), // off by default
